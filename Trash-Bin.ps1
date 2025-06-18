@@ -47,9 +47,10 @@ Function Start-TrashBinCLI {
 
 		if ($Folders -or $Files) {
 			Write-Host ""
-			foreach ($Folder in $Folders) { Write-Host $Folder.Name -BackgroundColor Blue}
+			# NOTE: For color to show you must be using PS7+ and a terminal supporting ANSI color codelike Windows Terminal.
+			foreach ($Folder in $Folders) { Write-Host "`e[44;97m$($Folder.Name)`e[0m"}
 			Write-Host ""
-	        	foreach ($File in $Files) { Write-Host $File.Name -BackgroundColor Black }
+	        	foreach ($File in $Files) { Write-Host $File.Name }
 			Write-Host ""
 		} else {
 			Write-Host "Recycle Bin is empty!" -ForegroundColor Yellow

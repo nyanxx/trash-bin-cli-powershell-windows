@@ -72,7 +72,7 @@ Function Start-TrashBinCLI {
 			Write-Host ("Moving '{0}' to the Recycle Bin" -f $Path) -ForegroundColor Green
 			
 			# Main Logic
-			if (Test-Path -Path $FullPath -PathType Container) {
+			if (Test-Path -LiteralPath $FullPath -PathType Container) {
         			[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($FullPath,'OnlyErrorDialogs','SendToRecycleBin')
 			} else {
 				[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($FullPath,'OnlyErrorDialogs','SendToRecycleBin')

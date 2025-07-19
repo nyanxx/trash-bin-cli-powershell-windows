@@ -142,7 +142,6 @@ Function Start-TrashBinCLI {
 				return
 			}
 		}
-
 		Write-Host "Item `"$Path`" not found in Recycle Bin" -ForegroundColor Red
 	}
 
@@ -176,7 +175,6 @@ Function Start-TrashBinCLI {
 		}
 	}
 
-	
 	if($Path) {
 		Move-ToRecycleBin
 	}
@@ -184,8 +182,6 @@ Function Start-TrashBinCLI {
 		Write-Host "No action or path provided!" -ForegroundColor Yellow
 	}
 }
-
 Set-Alias trash Start-TrashBinCLI
-# TODO: Why folder doesn't delete / move to recycle bin if the item location is like "C:\Users\username\OneDrive\[ 8 ] Folder Space\Folder" edit1: it's because of "[" special char
-#!REF: https://stackoverflow.com/questions/502002/how-do-i-move-a-file-to-the-recycle-bin-using-powershell
+# REF: https://stackoverflow.com/questions/502002/how-do-i-move-a-file-to-the-recycle-bin-using-powershell
 

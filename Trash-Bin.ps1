@@ -7,6 +7,9 @@ A simple CLI tool to interact with the Windows Recycle Bin and delete files and 
 - List recycle bin contents (name, size, date deleted, original location).
 - Delete items from recycle bin, or empty the whole bin.
 - Restore items from recycle bin, optionally to an alternate destination.
+- Guards against trashing protected paths (home dir, drive/system roots) and prompts for
+  confirmation on sensitive paths (Desktop, Documents, Downloads), configurable via
+  $HOME\.trashbin\config.json (auto-created on first run).
 
 .PARAMETER Path
 One or more files/folders to move to the recycle bin. Supports wildcards and arrays/pipeline input.
@@ -49,6 +52,95 @@ Function Start-TrashBinCLI {
 		[Parameter(Mandatory = $false)]
 		[switch]$Force
 	)
+
+	# Load (and auto-create) the trash-bin safeguard config from $HOME\.trashbin\config.json
+	Function Get-TrashBinConfig {
+		$ConfigDir = Join-Path $env:USERPROFILE ".trashbin"
+		$ConfigPath = Join-Path $ConfigDir "config.json"
+
+		$DefaultConfig = [ordered]@{
+			protected = @(
+				"C:\",
+				'$HOME',
+				"C:\Windows",
+				"C:\Program Files",
+				"C:\Program Files (x86)"
+			)
+			confirm = @(
+				'$HOME\Desktop',
+				'$HOME\Documents',
+				'$HOME\Downloads'
+			)
+		}
+
+		if (-not (Test-Path -LiteralPath $ConfigPath)) {
+			if (-not (Test-Path -LiteralPath $ConfigDir)) {
+				New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
+			}
+			$DefaultConfig | ConvertTo-Json | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
+			Write-Host "Created default trash-bin safeguard config at `"$ConfigPath`"" -ForegroundColor Cyan
+		}
+
+		$RawConfig = $DefaultConfig
+		try {
+			$Loaded = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json -ErrorAction Stop
+			$RawConfig = @{
+				protected = @($Loaded.protected)
+				confirm   = @($Loaded.confirm)
+			}
+		} catch {
+			Write-Host "Could not parse `"$ConfigPath`" - using built-in defaults for this run" -ForegroundColor Yellow
+		}
+
+		Function Expand-HomeToken([string]$PathValue) {
+			$PathValue.Replace('$HOME', $env:USERPROFILE).TrimEnd('\')
+		}
+
+		[PSCustomObject]@{
+			Protected = @($RawConfig.protected | ForEach-Object { Expand-HomeToken $_ })
+			Confirm   = @($RawConfig.confirm | ForEach-Object { Expand-HomeToken $_ })
+		}
+	}
+
+	# Check a fully-resolved path against the safeguard config: Blocked, Confirm, or Allow
+	Function Test-TrashBinGuard {
+		param([string]$FullPath, $Config)
+
+		$Normalized = [System.IO.Path]::GetFullPath($FullPath).TrimEnd('\')
+
+		Function Test-IsSameOrChild([string]$Candidate, [string]$Root) {
+			if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
+			$Root = $Root.TrimEnd('\')
+			if ($Candidate.Equals($Root, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+
+			# A bare drive root (e.g. "C:") would otherwise match every path on that drive - only
+			# treat it as an exact-match guard, not a "protect everything under this drive" guard.
+			if ($Root -match '^[A-Za-z]:$') { return $false }
+
+			return $Candidate.StartsWith("$Root\", [System.StringComparison]::OrdinalIgnoreCase)
+		}
+
+		# The most specific (longest) matching root wins, so a "confirm" entry nested inside a
+		# "protected" root (e.g. Desktop under a protected $HOME) overrides the broader block.
+		$BestMatch = $null
+		$BestTier = $null
+
+		foreach ($ProtectedPath in $Config.Protected) {
+			if ((Test-IsSameOrChild -Candidate $Normalized -Root $ProtectedPath) -and (-not $BestMatch -or $ProtectedPath.Length -gt $BestMatch.Length)) {
+				$BestMatch = $ProtectedPath.TrimEnd('\')
+				$BestTier = 'Blocked'
+			}
+		}
+		foreach ($ConfirmPath in $Config.Confirm) {
+			if ((Test-IsSameOrChild -Candidate $Normalized -Root $ConfirmPath) -and (-not $BestMatch -or $ConfirmPath.Length -gt $BestMatch.Length)) {
+				$BestMatch = $ConfirmPath.TrimEnd('\')
+				$BestTier = 'Confirm'
+			}
+		}
+
+		if ($BestTier) { return $BestTier }
+		return 'Allow'
+	}
 
 	# Resolve a "Name" / "Original Location" / "Date Deleted" / "Size" column index dynamically (locale-safe)
 	Function Get-RecycleBinColumnIndex {
@@ -95,6 +187,7 @@ Function Start-TrashBinCLI {
 	# Move item(s) into recycle bin - supports multiple paths, arrays, and wildcards
 	Function Move-ToRecycleBin {
 		Add-Type -AssemblyName Microsoft.VisualBasic
+		$GuardConfig = Get-TrashBinConfig
 
 		$ResolvedItems = foreach ($SinglePath in $Path) {
 			# "." means "empty this folder", not "trash this folder"
@@ -124,6 +217,20 @@ Function Start-TrashBinCLI {
 			}
 
 			$FullPath = $Item.FullName
+
+			$GuardResult = Test-TrashBinGuard -FullPath $FullPath -Config $GuardConfig
+			if ($GuardResult -eq 'Blocked') {
+				Write-Host "'$FullPath' is protected and cannot be trashed. Edit `"$env:USERPROFILE\.trashbin\config.json`" to change this." -ForegroundColor Red
+				continue
+			}
+			if ($GuardResult -eq 'Confirm') {
+				$Answer = Read-Host "Are you sure you want to trash '$FullPath'? [y/N]"
+				if ($Answer -notmatch '^y(es)?$') {
+					Write-Host "Cancelled." -ForegroundColor Yellow
+					continue
+				}
+			}
+
 			if (-not $PSCmdlet.ShouldProcess($FullPath, "Move to Recycle Bin")) { continue }
 
 			Write-Verbose ("Moving '{0}' to the Recycle Bin" -f $FullPath)
